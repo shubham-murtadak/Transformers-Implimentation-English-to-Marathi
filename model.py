@@ -347,7 +347,102 @@ class ResidualConnection(nn.Module):
         # This operation preserves gradients during backpropagation and avoids vanishing gradient issues
         return x + self.dropout(sublayer(self.norm(x)))
 
+class EncoderBlock(nn.Module):
+    """
+    Implementation of a single Encoder Block
 
+    Each Encoder Block consists of:
+    - Multi-Head Self-Attention Mechanism
+    - Feed-Forward Neural Network
+    - Two Residual Connections with Layer Normalization
+
+    Input Parameters:
+        self_attention_block (MultiHeadAttentionBlock): Multi-Head Attention mechanism.
+        feed_forward_block (FeedForwardBlock): Feed-forward neural network.
+        dropout (float): Dropout probability for regularization.
+    """
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        super().__init__()
+
+        # Multi-Head Self-Attention mechanism
+        self.self_attention_block = self_attention_block
+
+        # Feed-Forward Neural Network
+        self.feed_forward_block = feed_forward_block
+
+        # ModuleList to handle residual connections with Layer Normalization
+        # Creating two residual connections, one for attention and one for feed-forward
+        self.residual_connections = nn.ModuleList([
+            ResidualConnection(dropout),  # For Self-Attention
+            ResidualConnection(dropout)   # For Feed-Forward
+        ])
+
+    def forward(self, x, src_mask):
+        """
+        Forward pass for a single Encoder Block.
+
+        Parameters:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model)
+            src_mask (Tensor): Mask tensor to ignore certain positions
+
+        Returns:
+            Tensor: Encoded output of shape (batch_size, seq_len, d_model)
+        """
+
+        # Step 1: Multi-Head Self-Attention with Residual Connection
+        # Using lambda to pass query, key, and value as x
+        # Shape remains (batch_size, seq_len, d_model)
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
+
+        # Step 2: Feed-Forward Block with Residual Connection
+        # Directly passing feed-forward block as sublayer
+        # Shape remains (batch_size, seq_len, d_model)
+        x = self.residual_connections[1](x, self.feed_forward_block)
+
+        # Step 3: Return the output of the encoder block
+        return x
+
+
+class Encoder(nn.Module):
+    """
+    Implements the Nx Encoders for the Transformer model.
+
+
+    Input Parameters:
+        layers (nn.ModuleList): A list of encoder layers, each implementing
+                                multi-head attention and feed-forward operations.
+    """
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+
+        # Storing encoder layers in nn.ModuleList
+        # nn.ModuleList ensures proper registration of parameters
+        self.layers = layers
+
+        # Final Layer Normalization to stabilize output
+        self.norm = LayerNormalization()
+
+    def forward(self, x, mask):
+        """
+        Forward pass for the Encoder.
+
+        Parameters:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model)
+            mask (Tensor): Mask tensor to ignore certain positions
+
+        Returns:
+            Tensor: Encoded output of shape (batch_size, seq_len, d_model)
+        """
+
+        # Step 1: Sequentially pass input through each encoder layer
+        for layer in self.layers:
+            x = layer(x, mask)  # Each layer expects (input, mask)
+
+        # Step 2: Apply final Layer Normalization
+        # Normalizes the final output to stabilize training
+        return self.norm(x)
 
 
     

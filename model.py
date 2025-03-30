@@ -445,7 +445,340 @@ class Encoder(nn.Module):
         return self.norm(x)
 
 
+# class DecoderBlock(nn.Module):
+
+#     def __init__(self,self_attention_block:MultiHeadAttentionBlock,cross_attention_block:MultiHeadAttentionBlock,feed_forward_block:FeedForwardBlock,dropout:float):
+#         super().__init__()
+#         self.self_attention_block=self_attention_block 
+#         self.cross_attention_block=cross_attention_block
+#         self.feed_forward_block=feed_forward_block 
+#         self.residual_connections=nn.Module([ResidualConnection(dropout) for _ in range(3)])
+
     
+#     def forward(self,x,encoder_output,src_mask,tgt_mask):
+#         x=self.residual_connections[0](x,lambda x:self.self_attention_block(x,x,x,tgt_mask))
+#         x=self.residual_connections[1](x,lambda x:self.cross_attention_block(x,encoder_output,encoder_output,src_mask))
+#         x=self.residual_connections[2](x,self.feed_forward_block)
+
+#         return x 
+    
+
+# class Decoder(nn.Module):
+#     def __init__(self,layers:nn.ModuleList)->None:
+#         super().__init__()
+#         self.layers=layers
+#         self.norm=LayerNormalization() 
+    
+#     def forward(self,x,encoder_output,src_mask,tgt_mask):
+#         for layer in self.layers:
+#             x=layer(x,encoder_output,src_mask,tgt_mask)
+        
+#         return self.norm(x)
+    
+class DecoderBlock(nn.Module):
+    """
+    Implements a single Decoder Block in the Transformer model.
+
+    Each Decoder Block consists of:
+    - Masked Multi-Head Self-Attention
+    - Cross-Attention (Multi-Head Attention over Encoder output)
+    - Feed-Forward Neural Network
+    - Three Residual Connections with Layer Normalization
+
+    Input Parameters:
+        self_attention_block (MultiHeadAttentionBlock): Masked self-attention mechanism.
+        cross_attention_block (MultiHeadAttentionBlock): Cross-attention mechanism.
+        feed_forward_block (FeedForwardBlock): Feed-forward neural network.
+        dropout (float): Dropout probability for regularization.
+    """
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock,cross_attention_block: MultiHeadAttentionBlock,feed_forward_block: FeedForwardBlock,dropout: float) -> None:
+        super().__init__()
+
+        # Masked Self-Attention Mechanism
+        self.self_attention_block = self_attention_block
+
+        # Cross-Attention Mechanism (Encoder-Decoder Attention)
+        self.cross_attention_block = cross_attention_block
+
+        # Feed-Forward Neural Network
+        self.feed_forward_block = feed_forward_block
+
+        # Residual Connections
+        # Creating three residual connections for attention, cross-attention, and feed-forward
+        # self.residual_connections = nn.ModuleList([
+        #     ResidualConnection(dropout),  # For Self-Attention
+        #     ResidualConnection(dropout),  # For Cross-Attention
+        #     ResidualConnection(dropout)   # For Feed-Forward
+        # ])
+        self.residual_connections=nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Forward pass for a single Decoder Block.
+
+        Parameters:
+            x (Tensor): Target input tensor of shape (batch_size, tgt_seq_len, d_model)
+            encoder_output (Tensor): Encoder output of shape (batch_size, src_seq_len, d_model)
+            src_mask (Tensor): Mask for the encoder input
+            tgt_mask (Tensor): Mask for the target input (to preserve auto-regression)
+
+        Returns:
+            Tensor: Decoded output of shape (batch_size, tgt_seq_len, d_model)
+        """
+
+        # Step 1: Masked Multi-Head Self-Attention with Residual Connection
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
+
+        # Step 2: Cross-Attention with Residual Connection
+        x = self.residual_connections[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
+
+        # Step 3: Feed-Forward Network with Residual Connection
+        x = self.residual_connections[2](x, self.feed_forward_block)
+
+        # Step 4: Return the output of the decoder block
+        return x
+
+
+class Decoder(nn.Module):
+    """
+    Implements the Transformer Decoder consisting of multiple Decoder Blocks.
+
+    Input Parameters:
+        layers (nn.ModuleList): List of DecoderBlocks.
+    """
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+
+        # Store decoder layers
+        self.layers = layers
+
+        # Final Layer Normalization
+        self.norm = LayerNormalization()
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Forward pass for the Transformer Decoder.
+
+        Parameters:
+            x (Tensor): Target input tensor of shape (batch_size, tgt_seq_len, d_model)
+            encoder_output (Tensor): Encoder output of shape (batch_size, src_seq_len, d_model)
+            src_mask (Tensor): Mask for the encoder input
+            tgt_mask (Tensor): Mask for the target input (to preserve auto-regression)
+
+        Returns:
+            Tensor: Decoded output of shape (batch_size, tgt_seq_len, d_model)
+        """
+
+        # Pass through each decoder layer
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
+
+        # Final normalization
+        return self.norm(x)
+
+class ProjectionLayer(nn.Module):
+    """
+    The ProjectionLayer maps the model output to the target vocabulary space.
+    
+    Parameters:
+        d_model (int): The dimension of the model output (embedding size).
+        vocab_size (int): The size of the target vocabulary.
+
+    Forward Pass:
+        Input Shape: (batch_size, seq_len, d_model)
+        Output Shape: (batch_size, seq_len, vocab_size)
+    """
+
+    def __init__(self, d_model: int, vocab_size: int) -> None:
+        super().__init__()
+        self.proj = nn.Linear(d_model, vocab_size) # Linear layer to project to vocab size y=x.W^T+b
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Performs the projection and returns log-probabilities.
+
+        Parameters:
+            x (Tensor): Model output of shape (batch_size, seq_len, d_model)
+
+        Returns:
+            Tensor: Log probabilities of shape (batch_size, seq_len, vocab_size)
+        """
+        # Linear projection + Log Softmax for numerical stability
+        return torch.log_softmax(self.proj(x), dim=-1)
+
+class Transformer(nn.Module):
+    """
+    The Transformer class implements the full Transformer model architecture
+    for sequence-to-sequence tasks, integrating the encoder, decoder, embeddings,
+    positional encodings, and projection layer.
+
+    Parameters:
+        encoder (Encoder): The encoder stack that processes source sequences.
+        decoder (Decoder): The decoder stack that generates target sequences.
+        src_embed (InputEmbeddings): Embedding layer for the source sequence.
+        tgt_embed (InputEmbeddings): Embedding layer for the target sequence.
+        src_pos (PositionalEncoding): Positional encoding for the source sequence.
+        tgt_pos (PositionalEncoding): Positional encoding for the target sequence.
+        projection_layer (ProjectionLayer): Final projection layer to map decoder output to vocabulary.
+
+    Forward Pass:
+        - Encodes the input sequence using the encoder.
+        - Decodes using the decoder with encoder output and target sequence.
+        - Projects the decoder output to vocabulary probabilities.
+
+    """
+
+    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbeddings, tgt_embed: InputEmbeddings, src_pos: PositionalEncoding, tgt_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+        super().__init__()
+        self.encoder = encoder                  # Encoder stack
+        self.decoder = decoder                  # Decoder stack
+        self.src_embed = src_embed              # Source sequence embedding
+        self.tgt_embed = tgt_embed              # Target sequence embedding
+        self.src_pos = src_pos                  # Source positional encoding
+        self.tgt_pos = tgt_pos                  # Target positional encoding
+        self.projection_layer = projection_layer # Projection to vocab
+
+    def encode(self, src: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Encodes the input source sequence.
+
+        Parameters:
+            src (Tensor): Source input tensor of shape (batch_size, src_seq_len)
+            src_mask (Tensor): Mask for source input to ignore padding
+
+        Returns:
+            Tensor: Encoded source of shape (batch_size, src_seq_len, d_model)
+        """
+        # Step 1: Apply input embeddings
+        src = self.src_embed(src)
+        
+        # Step 2: Apply positional encoding
+        src = self.src_pos(src)
+        
+        # Step 3: Pass through the encoder stack
+        return self.encoder(src, src_mask)
+    
+    def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Decodes the target sequence using encoder outputs.
+
+        Parameters:
+            encoder_output (Tensor): Encoded source tensor of shape (batch_size, src_seq_len, d_model)
+            src_mask (Tensor): Mask for the source input
+            tgt (Tensor): Target input tensor of shape (batch_size, tgt_seq_len)
+            tgt_mask (Tensor): Mask for the target input to ignore padding
+
+        Returns:
+            Tensor: Decoded output of shape (batch_size, tgt_seq_len, d_model)
+        """
+        # Step 1: Apply target embeddings
+        tgt = self.tgt_embed(tgt)
+        
+        # Step 2: Apply positional encoding
+        tgt = self.tgt_pos(tgt)
+        
+        # Step 3: Pass through the decoder stack
+        return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+    
+    def project(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Projects the model output to the target vocabulary space.
+
+        Parameters:
+            x (Tensor): Decoder output of shape (batch_size, tgt_seq_len, d_model)
+
+        Returns:
+            Tensor: Predicted log-probabilities of shape (batch_size, tgt_seq_len, vocab_size)
+        """
+        # Linear projection and softmax to get probability distribution
+        return self.projection_layer(x)
+
+
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int,  d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
+    """
+    Builds a complete Transformer model by assembling its components.
+
+    Parameters:
+        src_vocab_size (int): Size of the source vocabulary.
+        tgt_vocab_size (int): Size of the target vocabulary.
+        src_seq_len (int): Maximum length of the source sequence.
+        tgt_seq_len (int): Maximum length of the target sequence.
+        d_model (int): Dimensionality of input/hidden layers (default: 512).
+        N (int): Number of layers in the encoder and decoder (default: 6).
+        h (int): Number of attention heads (default: 8).
+        dropout (float): Dropout rate for regularization (default: 0.1).
+        d_ff (int): Dimensionality of feed-forward layer (default: 2048).
+
+    Returns:
+        Transformer: A configured Transformer model instance.
+    """
+
+    # Step 1: Create Embedding Layers
+    # InputEmbeddings: Transforms input indices into dense vectors
+    src_embed = InputEmbeddings(d_model, src_vocab_size)
+    tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
+
+    # Step 2: Create Positional Encoding Layers
+    # PositionalEncoding: Adds positional information to embeddings
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+
+    # Step 3: Create Encoder Blocks
+    encoder_blocks = []
+    for _ in range(N):
+        # MultiHeadAttentionBlock: Self-attention mechanism for encoder
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+
+        # FeedForwardBlock: Position-wise feed-forward network
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+
+        # EncoderBlock: Encapsulates self-attention and feed-forward network with residual connections
+        encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
+        
+        encoder_blocks.append(encoder_block)
+
+    # Step 4: Create Decoder Blocks
+    decoder_blocks = []
+    for _ in range(N):
+        # MultiHeadAttentionBlock for self-attention and cross-attention in the decoder
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+
+        # FeedForwardBlock for the decoder
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+
+        # DecoderBlock: Encapsulates self-attention, cross-attention, and feed-forward network
+        decoder_block = DecoderBlock(d_model, decoder_self_attention_block, 
+                                     decoder_cross_attention_block, feed_forward_block, dropout)
+        
+        decoder_blocks.append(decoder_block)
+
+    # Step 5: Create Encoder and Decoder
+    # Encoder: Stacks N encoder blocks
+    encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
+
+    # Decoder: Stacks N decoder blocks
+    decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
+
+    # Step 6: Create the Projection Layer
+    # ProjectionLayer: Maps model output to vocabulary size with log probabilities
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+
+    # Step 7: Assemble the Transformer
+    # Transformer: Brings together encoder, decoder, embedding, positional encoding, and projection layer
+    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+
+    # Step 8: Parameter Initialization
+    # Xavier Initialization: Ensures better gradient flow in deep networks
+    for p in transformer.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+
+    return transformer
+
+
 if __name__=='__main__':
     print("Inside name main:")
     # Example parameters
